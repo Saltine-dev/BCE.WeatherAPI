@@ -18,9 +18,12 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# AWS region configuration
+REGION = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
+
 # AWS clients
-dynamodb = boto3.resource('dynamodb')
-secrets_client = boto3.client('secretsmanager')
+dynamodb = boto3.resource('dynamodb', region_name=REGION)
+secrets_client = boto3.client('secretsmanager', region_name=REGION)
 
 # Environment variables
 TABLE_NAME = os.environ.get('DYNAMODB_TABLE_NAME', 'weather-data')
