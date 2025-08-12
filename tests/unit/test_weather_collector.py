@@ -9,11 +9,20 @@ import unittest
 from unittest.mock import Mock, patch, MagicMock
 from decimal import Decimal
 from datetime import datetime, timezone
+from pathlib import Path
+import importlib.util
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src/lambdas/weather_collector'))
-
-import handler
+# Load weather_collector handler module with a unique name to avoid collisions
+_collector_path = (
+    Path(__file__).resolve().parents[2]
+    / 'src' / 'lambdas' / 'weather_collector' / 'handler.py'
+)
+_collector_spec = importlib.util.spec_from_file_location(
+    'weather_collector_handler', str(_collector_path)
+)
+weather_collector_handler = importlib.util.module_from_spec(_collector_spec)
+assert _collector_spec and _collector_spec.loader
+_collector_spec.loader.exec_module(weather_collector_handler)
 
 
 class TestWeatherAPIClients(unittest.TestCase):
@@ -23,7 +32,7 @@ class TestWeatherAPIClients(unittest.TestCase):
         """Set up test fixtures"""
         self.mock_api_key = "test_api_key"
         
-    @patch('handler.requests.get')
+    @patch('weather_collector_handler.requests.get')
     def test_openweathermap_client_success(self, mock_get):
         """Test OpenWeatherMap client successful data fetch"""
         mock_response = Mock()
@@ -46,7 +55,7 @@ class TestWeatherAPIClients(unittest.TestCase):
         }
         mock_get.return_value = mock_response
         
-        client = handler.OpenWeatherMapClient("openweathermap", self.mock_api_key)
+        client = weather_collector_handler.OpenWeatherMapClient("openweathermap", self.mock_api_key)
         result = client.fetch_data()
         
         self.assertIsNotNone(result)
@@ -54,17 +63,17 @@ class TestWeatherAPIClients(unittest.TestCase):
         self.assertEqual(result["temperature"], 25.5)
         self.assertEqual(result["humidity"], 65)
         
-    @patch('handler.requests.get')
+    @patch('weather_collector_handler.requests.get')
     def test_openweathermap_client_failure(self, mock_get):
         """Test OpenWeatherMap client handling API failure"""
         mock_get.side_effect = Exception("API Error")
         
-        client = handler.OpenWeatherMapClient("openweathermap", self.mock_api_key)
+        client = weather_collector_handler.OpenWeatherMapClient("openweathermap", self.mock_api_key)
         result = client.fetch_data()
         
         self.assertIsNone(result)
     
-    @patch('handler.requests.get')
+    @patch('weather_collector_handler.requests.get')
     def test_weatherapi_client_success(self, mock_get):
         """Test WeatherAPI.com client successful data fetch"""
         mock_response = Mock()
@@ -86,7 +95,7 @@ class TestWeatherAPIClients(unittest.TestCase):
         }
         mock_get.return_value = mock_response
         
-        client = handler.WeatherAPIComClient("weatherapi", self.mock_api_key)
+        client = weather_collector_handler.WeatherAPIComClient("weatherapi", self.mock_api_key)
         result = client.fetch_data()
         
         self.assertIsNotNone(result)
@@ -94,7 +103,7 @@ class TestWeatherAPIClients(unittest.TestCase):
         self.assertEqual(result["temperature"], 24.0)
         self.assertAlmostEqual(result["wind_speed"], 15 / 3.6, places=2)
         
-    @patch('handler.requests.get')
+    @patch('weather_collector_handler.requests.get')
     def test_openmeteo_client_success(self, mock_get):
         """Test Open-Meteo client successful data fetch"""
         mock_response = Mock()
@@ -114,7 +123,7 @@ class TestWeatherAPIClients(unittest.TestCase):
         }
         mock_get.return_value = mock_response
         
-        client = handler.OpenMeteoClient("openmeteo")
+        client = weather_collector_handler.OpenMeteoClient("openmeteo")
         result = client.fetch_data()
         
         self.assertIsNotNone(result)
@@ -135,14 +144,14 @@ class TestDataProcessing(unittest.TestCase):
             {"temp": 26, "humidity": 70, "pressure": 1012}
         ]
         
-        score = handler.calculate_data_quality_score(data_points)
+        score = weather_collector_handler.calculate_data_quality_score(data_points)
         
         # (3/3 + 2/3 + 0 + 3/3) / 4 = 0.67
         self.assertAlmostEqual(score, 0.67, places=2)
     
     def test_calculate_data_quality_score_empty(self):
         """Test data quality score with empty data"""
-        score = handler.calculate_data_quality_score([])
+        score = weather_collector_handler.calculate_data_quality_score([])
         self.assertEqual(score, 0.0)
     
     def test_aggregate_weather_data(self):
@@ -171,7 +180,7 @@ class TestDataProcessing(unittest.TestCase):
             }
         ]
         
-        result = handler.aggregate_weather_data(data_points)
+        result = weather_collector_handler.aggregate_weather_data(data_points)
         
         self.assertEqual(len(result["sources"]), 3)
         self.assertAlmostEqual(result["temperature_avg"], 25.0, places=1)
@@ -181,7 +190,7 @@ class TestDataProcessing(unittest.TestCase):
     
     def test_aggregate_weather_data_empty(self):
         """Test aggregation with empty data"""
-        result = handler.aggregate_weather_data([])
+        result = weather_collector_handler.aggregate_weather_data([])
         self.assertEqual(result, {})
     
     def test_convert_to_dynamodb_format(self):
@@ -195,7 +204,7 @@ class TestDataProcessing(unittest.TestCase):
             "list": [1.5, 2.5, 3.5]
         }
         
-        result = handler.convert_to_dynamodb_format(data)
+        result = weather_collector_handler.convert_to_dynamodb_format(data)
         
         self.assertIsInstance(result["temperature"], Decimal)
         self.assertEqual(result["temperature"], Decimal('25.5'))
@@ -206,10 +215,10 @@ class TestDataProcessing(unittest.TestCase):
 class TestLambdaHandler(unittest.TestCase):
     """Test main Lambda handler function"""
     
-    @patch('handler.store_in_dynamodb')
-    @patch('handler.get_api_keys')
-    @patch('handler.OpenWeatherMapClient')
-    @patch('handler.OpenMeteoClient')
+    @patch('weather_collector_handler.store_in_dynamodb')
+    @patch('weather_collector_handler.get_api_keys')
+    @patch('weather_collector_handler.OpenWeatherMapClient')
+    @patch('weather_collector_handler.OpenMeteoClient')
     def test_lambda_handler_success(self, mock_openmeteo, mock_openweather, mock_get_keys, mock_store):
         """Test successful Lambda execution"""
         # Mock API keys
@@ -235,7 +244,7 @@ class TestLambdaHandler(unittest.TestCase):
         mock_openmeteo.return_value = mock_om_instance
         
         # Call handler
-        result = handler.lambda_handler({}, {})
+        result = weather_collector_handler.lambda_handler({}, {})
         
         # Verify response
         self.assertEqual(result["statusCode"], 200)
@@ -246,12 +255,12 @@ class TestLambdaHandler(unittest.TestCase):
         # Verify DynamoDB storage was called
         mock_store.assert_called_once()
     
-    @patch('handler.get_api_keys')
+    @patch('weather_collector_handler.get_api_keys')
     def test_lambda_handler_no_data(self, mock_get_keys):
         """Test Lambda handler when no data can be fetched"""
         mock_get_keys.return_value = {}
         
-        result = handler.lambda_handler({}, {})
+        result = weather_collector_handler.lambda_handler({}, {})
         
         self.assertEqual(result["statusCode"], 500)
         body = json.loads(result["body"])
@@ -261,7 +270,7 @@ class TestLambdaHandler(unittest.TestCase):
 class TestSecretsManager(unittest.TestCase):
     """Test Secrets Manager integration"""
     
-    @patch('handler.secrets_client.get_secret_value')
+    @patch('weather_collector_handler.secrets_client.get_secret_value')
     def test_get_api_keys_success(self, mock_get_secret):
         """Test successful API key retrieval"""
         mock_get_secret.return_value = {
@@ -271,12 +280,12 @@ class TestSecretsManager(unittest.TestCase):
             })
         }
         
-        keys = handler.get_api_keys()
+        keys = weather_collector_handler.get_api_keys()
         
         self.assertEqual(keys["openweathermap"], "key1")
         self.assertEqual(keys["weatherapi"], "key2")
     
-    @patch('handler.secrets_client.get_secret_value')
+    @patch('weather_collector_handler.secrets_client.get_secret_value')
     def test_get_api_keys_failure(self, mock_get_secret):
         """Test API key retrieval failure"""
         from botocore.exceptions import ClientError
@@ -285,7 +294,7 @@ class TestSecretsManager(unittest.TestCase):
             'GetSecretValue'
         )
         
-        keys = handler.get_api_keys()
+        keys = weather_collector_handler.get_api_keys()
         
         self.assertEqual(keys, {})
 
@@ -293,7 +302,7 @@ class TestSecretsManager(unittest.TestCase):
 class TestDynamoDBStorage(unittest.TestCase):
     """Test DynamoDB storage operations"""
     
-    @patch('handler.dynamodb.Table')
+    @patch('weather_collector_handler.dynamodb.Table')
     def test_store_in_dynamodb_success(self, mock_table_class):
         """Test successful DynamoDB storage"""
         mock_table = Mock()
@@ -306,7 +315,7 @@ class TestDynamoDBStorage(unittest.TestCase):
         }
         quality_score = 0.85
         
-        handler.store_in_dynamodb(weather_data, quality_score)
+        weather_collector_handler.store_in_dynamodb(weather_data, quality_score)
         
         # Verify put_item was called
         mock_table.put_item.assert_called_once()
@@ -315,13 +324,13 @@ class TestDynamoDBStorage(unittest.TestCase):
         call_args = mock_table.put_item.call_args
         item = call_args[1]['Item']
         
-        self.assertEqual(item['location'], handler.LOCATION)
+        self.assertEqual(item['location'], weather_collector_handler.LOCATION)
         self.assertIn('timestamp', item)
         self.assertIn('weather_data', item)
         self.assertEqual(item['data_quality_score'], Decimal('0.85'))
         self.assertIn('ttl', item)
     
-    @patch('handler.dynamodb.Table')
+    @patch('weather_collector_handler.dynamodb.Table')
     def test_store_in_dynamodb_failure(self, mock_table_class):
         """Test DynamoDB storage failure handling"""
         mock_table = Mock()
@@ -329,7 +338,7 @@ class TestDynamoDBStorage(unittest.TestCase):
         mock_table_class.return_value = mock_table
         
         with self.assertRaises(Exception):
-            handler.store_in_dynamodb({}, 0.5)
+            weather_collector_handler.store_in_dynamodb({}, 0.5)
 
 
 if __name__ == '__main__':
