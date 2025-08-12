@@ -23,6 +23,9 @@ _api_spec = importlib.util.spec_from_file_location(
 weather_api_handler = importlib.util.module_from_spec(_api_spec)
 assert _api_spec and _api_spec.loader
 _api_spec.loader.exec_module(weather_api_handler)
+# Register module so @patch can resolve it by name
+import sys as _sys
+_sys.modules['weather_api_handler'] = weather_api_handler
 
 
 class TestResponseHelpers(unittest.TestCase):

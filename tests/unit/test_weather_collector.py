@@ -23,6 +23,9 @@ _collector_spec = importlib.util.spec_from_file_location(
 weather_collector_handler = importlib.util.module_from_spec(_collector_spec)
 assert _collector_spec and _collector_spec.loader
 _collector_spec.loader.exec_module(weather_collector_handler)
+# Register module so @patch can resolve it by name
+import sys as _sys
+_sys.modules['weather_collector_handler'] = weather_collector_handler
 
 
 class TestWeatherAPIClients(unittest.TestCase):
