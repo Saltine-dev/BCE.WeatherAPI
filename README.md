@@ -32,69 +32,69 @@ A comprehensive serverless weather API that aggregates data from multiple free w
 ```mermaid
 graph TD
 
-  %% Personas
+  %% Clients
   U["Clients / Apps"]
 
   %% Data sources
   subgraph "Data Sources"
-    OWM["OpenWeatherMap"]
-    WA["WeatherAPI"]
-    VC["Visual Crossing"]
-    OM["Open-Meteo"]
-    TIO["Tomorrow.io"]
+    SRC_OWM["OpenWeatherMap"]
+    SRC_WA["WeatherAPI"]
+    SRC_VC["Visual Crossing"]
+    SRC_OM["Open-Meteo"]
+    SRC_TIO["Tomorrow.io"]
   end
 
-  %% Ingestion layer
+  %% Ingestion
   subgraph "Ingestion"
-    EB["Amazon EventBridge\n(every 20 min)"]
-    COL["Lambda: Weather Collector"]
-    SM["AWS Secrets Manager\n(API keys)"]
+    EVB["EventBridge<br/>(every 20 min)"]
+    L_COL["Lambda: Weather Collector"]
+    SECRETS["Secrets Manager<br/>(API keys)"]
   end
 
   %% Storage
   subgraph "Storage"
-    DDB[("DynamoDB\n(weather data)")]
+    DDB["DynamoDB<br/>(weather data)"]
   end
 
-  %% API layer
-  subgraph "API"
+  %% API Layer
+  subgraph "API Layer"
     APIGW["API Gateway"]
-    API["Lambda: Weather API"]
+    L_API["Lambda: Weather API"]
   end
 
   %% Observability
   subgraph "Observability"
-    CW["CloudWatch\n(Logs • Alarms • Dashboard)"]
+    CW["CloudWatch<br/>(Logs • Alarms • Dashboard)"]
   end
 
   %% CI/CD
   subgraph "CI/CD"
     GH["GitHub Actions"]
     S3A["S3 (artifacts)"]
-    CFN["CloudFormation\n(Stack)"]
+    CFN["CloudFormation<br/>(Stack)"]
   end
 
-  %% Edges: data flow
-  OWM --> COL
-  WA  --> COL
-  VC  --> COL
-  OM  --> COL
-  TIO --> COL
-  EB  --> COL
-  SM  --> COL
-  COL --> DDB
-  COL --> CW
+  %% Data flow
+  SRC_OWM --> L_COL
+  SRC_WA  --> L_COL
+  SRC_VC  --> L_COL
+  SRC_OM  --> L_COL
+  SRC_TIO --> L_COL
+  EVB     --> L_COL
+  SECRETS --> L_COL
+  L_COL   --> DDB
+  L_COL   --> CW
 
-  U --> APIGW --> API --> DDB
-  API --> CW
+  U --> APIGW --> L_API --> DDB
+  L_API --> CW
 
-  %% Edges: CI/CD provisioning
+  %% CI/CD provisioning
   GH --> S3A --> CFN
   CFN --> APIGW
-  CFN --> API
-  CFN --> COL
+  CFN --> L_API
+  CFN --> L_COL
   CFN --> DDB
-  CFN --> SM
+  CFN --> SECRETS
   CFN --> CW
 ```
 
