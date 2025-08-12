@@ -213,8 +213,19 @@ jobs:
           API_KEY="lambdas/weather-api.zip"
           LAYER_KEY="layers/common-dependencies.zip"
           
-          # Check if stack exists
-          if aws cloudformation describe-stacks --stack-name "${STACK_NAME}" 2>/dev/null; then
+          # Determine stack action, and handle ROLLBACK_COMPLETE by deleting first
+          STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || echo "NONE")
+
+          if [ "$STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STATUS" = "ROLLBACK_FAILED" ]; then
+            echo "Stack is in $STATUS. Deleting before recreate..."
+            aws cloudformation delete-stack --stack-name "${STACK_NAME}"
+            aws cloudformation wait stack-delete-complete --stack-name "${STACK_NAME}"
+            STACK_ACTION="create-stack"
+            WAIT_ACTION="stack-create-complete"
+          elif aws cloudformation describe-stacks --stack-name "${STACK_NAME}" >/dev/null 2>&1; then
             STACK_ACTION="update-stack"
             WAIT_ACTION="stack-update-complete"
           else

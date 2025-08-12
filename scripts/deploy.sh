@@ -158,8 +158,21 @@ deploy_cloudformation_stack() {
     local bucket_name=$1
     print_info "Deploying CloudFormation stack..."
     
-    # Check if stack exists
-    if aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --region "${AWS_REGION}" 2>/dev/null; then
+    # Determine action and handle ROLLBACK_COMPLETE by deleting
+    STATUS=$(aws cloudformation describe-stacks \
+        --stack-name "${STACK_NAME}" \
+        --query "Stacks[0].StackStatus" \
+        --output text \
+        --region "${AWS_REGION}" 2>/dev/null || echo "NONE")
+
+    if [ "${STATUS}" = "ROLLBACK_COMPLETE" ] || [ "${STATUS}" = "ROLLBACK_FAILED" ]; then
+        print_warning "Stack is in ${STATUS}. Deleting before recreate..."
+        aws cloudformation delete-stack --stack-name "${STACK_NAME}" --region "${AWS_REGION}"
+        aws cloudformation wait stack-delete-complete --stack-name "${STACK_NAME}" --region "${AWS_REGION}"
+        STACK_ACTION="create-stack"
+        WAIT_ACTION="stack-create-complete"
+        print_info "Creating new stack: ${STACK_NAME}"
+    elif aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
         STACK_ACTION="update-stack"
         WAIT_ACTION="stack-update-complete"
         print_info "Updating existing stack: ${STACK_NAME}"
