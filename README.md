@@ -1,4 +1,4 @@
-# BCE - Weather API Aggregation System
+# WAAS - Weather API Aggregation System
 
 A comprehensive serverless weather API that aggregates data from multiple free weather APIs, stores it in AWS DynamoDB, and serves it through a unified REST API endpoint. Built with AWS Lambda, API Gateway, and automated CI/CD using GitHub Actions.
 
@@ -30,44 +30,72 @@ A comprehensive serverless weather API that aggregates data from multiple free w
 ## 🏗️ Architecture
 
 ```mermaid
-graph TB
-    subgraph "Weather Data Sources"
-        OWM[OpenWeatherMap]
-        WA[WeatherAPI]
-        VC[Visual Crossing]
-        OM[Open-Meteo]
-        TIO[Tomorrow.io]
-    end
-    
-    subgraph "AWS Infrastructure"
-        EB[EventBridge<br/>Every 20 min]
-        LC[Lambda Collector]
-        DB[(DynamoDB)]
-        SM[Secrets Manager]
-        AG[API Gateway]
-        LA[Lambda API]
-        CW[CloudWatch]
-    end
-    
-    subgraph "Users"
-        U[API Consumers]
-    end
-    
-    OWM --> LC
-    WA --> LC
-    VC --> LC
-    OM --> LC
-    TIO --> LC
-    
-    EB --> LC
-    SM --> LC
-    LC --> DB
-    LC --> CW
-    
-    U --> AG
-    AG --> LA
-    LA --> DB
-    LA --> CW
+graph TD
+
+  %% Personas
+  U["Clients / Apps"]
+
+  %% Data sources
+  subgraph "Data Sources"
+    OWM["OpenWeatherMap"]
+    WA["WeatherAPI"]
+    VC["Visual Crossing"]
+    OM["Open-Meteo"]
+    TIO["Tomorrow.io"]
+  end
+
+  %% Ingestion layer
+  subgraph "Ingestion"
+    EB["Amazon EventBridge\n(every 20 min)"]
+    COL["Lambda: Weather Collector"]
+    SM["AWS Secrets Manager\n(API keys)"]
+  end
+
+  %% Storage
+  subgraph "Storage"
+    DDB[("DynamoDB\n(weather data)")]
+  end
+
+  %% API layer
+  subgraph "API"
+    APIGW["API Gateway"]
+    API["Lambda: Weather API"]
+  end
+
+  %% Observability
+  subgraph "Observability"
+    CW["CloudWatch\n(Logs • Alarms • Dashboard)"]
+  end
+
+  %% CI/CD
+  subgraph "CI/CD"
+    GH["GitHub Actions"]
+    S3A["S3 (artifacts)"]
+    CFN["CloudFormation\n(Stack)"]
+  end
+
+  %% Edges: data flow
+  OWM --> COL
+  WA  --> COL
+  VC  --> COL
+  OM  --> COL
+  TIO --> COL
+  EB  --> COL
+  SM  --> COL
+  COL --> DDB
+  COL --> CW
+
+  U --> APIGW --> API --> DDB
+  API --> CW
+
+  %% Edges: CI/CD provisioning
+  GH --> S3A --> CFN
+  CFN --> APIGW
+  CFN --> API
+  CFN --> COL
+  CFN --> DDB
+  CFN --> SM
+  CFN --> CW
 ```
 
 ### Components
