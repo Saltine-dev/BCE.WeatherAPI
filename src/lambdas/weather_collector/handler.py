@@ -8,6 +8,8 @@ import json
 import logging
 import boto3
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from decimal import Decimal
@@ -31,6 +33,18 @@ SECRET_ARN = os.environ.get('SECRET_MANAGER_ARN')
 LOCATION = os.environ.get('LOCATION', 'lewisville-tx')
 LATITUDE = float(os.environ.get('LATITUDE', '33.0462'))
 LONGITUDE = float(os.environ.get('LONGITUDE', '-96.9942'))
+
+# Resilient HTTP session for degraded connectivity
+_retry_strategy = Retry(
+    total=2,
+    backoff_factor=0.5,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+)
+_http_adapter = HTTPAdapter(max_retries=_retry_strategy)
+HTTP = requests.Session()
+HTTP.mount("https://", _http_adapter)
+HTTP.mount("http://", _http_adapter)
 
 class WeatherAPIClient:
     """Base class for weather API clients"""
@@ -56,7 +70,7 @@ class OpenWeatherMapClient(WeatherAPIClient):
                 "units": "metric"
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = HTTP.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -90,7 +104,7 @@ class WeatherAPIComClient(WeatherAPIClient):
                 "aqi": "yes"
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = HTTP.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -126,7 +140,7 @@ class VisualCrossingClient(WeatherAPIClient):
                 "include": "current"
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = HTTP.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -163,7 +177,7 @@ class OpenMeteoClient(WeatherAPIClient):
                 "timezone": "America/Chicago"
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = HTTP.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -213,7 +227,7 @@ class TomorrowIOClient(WeatherAPIClient):
                 "units": "metric"
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = HTTP.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -323,7 +337,7 @@ def aggregate_weather_data(data_points: List[Dict]) -> Dict:
         "raw_data": valid_data
     }
     
-    # Calculate averages for numeric fields
+    # Calculate averages for numeric fields (handle single-source gracefully)
     for field in ["temperature", "feels_like", "humidity", "pressure", 
                  "wind_speed", "wind_direction", "clouds", "visibility", "uv_index"]:
         if aggregated[field]:
