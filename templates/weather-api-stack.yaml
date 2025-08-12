@@ -1,0 +1,668 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Weather API Aggregation System - Complete Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment
+  
+  ApiName:
+    Type: String
+    Default: weather-aggregator
+    Description: Name for the Weather API
+  
+  DataRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 365
+    Description: Number of days to retain weather data
+  
+  Location:
+    Type: String
+    Default: lewisville-tx
+    Description: Location identifier for weather data
+  
+  Latitude:
+    Type: String
+    Default: '33.0462'
+    Description: Latitude for weather location
+  
+  Longitude:
+    Type: String
+    Default: '-96.9942'
+    Description: Longitude for weather location
+
+  # Deployment artifact inputs (S3)
+  DeploymentBucketName:
+    Type: String
+    Description: Name of the existing S3 bucket that holds Lambda packages and optional layer
+
+  CollectorPackageKey:
+    Type: String
+    Default: lambdas/weather-collector.zip
+    Description: S3 key for the weather collector Lambda package
+
+  ApiPackageKey:
+    Type: String
+    Default: lambdas/weather-api.zip
+    Description: S3 key for the weather API Lambda package
+
+  UseCommonLayer:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true','false']
+    Description: Whether to create and attach a common dependencies layer
+
+  CommonLayerKey:
+    Type: String
+    Default: layers/common-dependencies.zip
+    Description: S3 key for the common dependencies Lambda layer package
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 300
+    MemorySize: 512
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        LOG_LEVEL: INFO
+
+Conditions:
+  UseCommonLayerCondition: !Equals [ !Ref UseCommonLayer, 'true' ]
+
+Resources:
+  # DynamoDB Table for Weather Data
+  WeatherDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ApiName}-${Environment}-weather-data'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: location
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: location
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: ttl
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApiName
+
+  # Secrets Manager for API Keys
+  WeatherAPISecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ApiName}-${Environment}-api-keys'
+      Description: API keys for weather service providers
+      SecretString: |
+        {
+          "openweathermap": "YOUR_OPENWEATHERMAP_API_KEY",
+          "weatherapi": "YOUR_WEATHERAPI_KEY",
+          "visualcrossing": "YOUR_VISUALCROSSING_KEY",
+          "tomorrow_io": "YOUR_TOMORROW_IO_KEY"
+        }
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApiName
+
+  # Lambda Layer for Common Dependencies (optional)
+  CommonDependenciesLayer:
+    Type: AWS::Lambda::LayerVersion
+    Condition: UseCommonLayerCondition
+    Properties:
+      LayerName: !Sub '${ApiName}-${Environment}-common-deps'
+      Description: Common dependencies for Lambda functions
+      Content:
+        S3Bucket: !Ref DeploymentBucketName
+        S3Key: !Ref CommonLayerKey
+      CompatibleRuntimes:
+        - python3.11
+
+  # IAM Role for Weather Collector Lambda
+  WeatherCollectorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApiName}-${Environment}-collector-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt WeatherDataTable.Arn
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref WeatherAPISecrets
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  # IAM Role for Weather API Lambda
+  WeatherAPIRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApiName}-${Environment}-api-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource: !GetAtt WeatherDataTable.Arn
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  # Lambda Function for Weather Collection
+  WeatherCollectorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ApiName}-${Environment}-collector'
+      Description: Collects weather data from multiple APIs
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Code:
+        S3Bucket: !Ref DeploymentBucketName
+        S3Key: !Ref CollectorPackageKey
+      MemorySize: 512
+      Timeout: 300
+      Role: !GetAtt WeatherCollectorRole.Arn
+      Layers:
+        - !If [ UseCommonLayerCondition, !Ref CommonDependenciesLayer, !Ref 'AWS::NoValue' ]
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref WeatherDataTable
+          SECRET_MANAGER_ARN: !Ref WeatherAPISecrets
+          LOCATION: !Ref Location
+          LATITUDE: !Ref Latitude
+          LONGITUDE: !Ref Longitude
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApiName
+
+  # Lambda Function for Weather API
+  WeatherAPIFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ApiName}-${Environment}-api'
+      Description: Serves weather data through REST API
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Code:
+        S3Bucket: !Ref DeploymentBucketName
+        S3Key: !Ref ApiPackageKey
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt WeatherAPIRole.Arn
+      Layers:
+        - !If [ UseCommonLayerCondition, !Ref CommonDependenciesLayer, !Ref 'AWS::NoValue' ]
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref WeatherDataTable
+          LOCATION: !Ref Location
+          CORS_ORIGIN: '*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApiName
+
+  # EventBridge Rule for Scheduled Collection
+  WeatherCollectionSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ApiName}-${Environment}-collection-schedule'
+      Description: Triggers weather data collection every 20 minutes
+      ScheduleExpression: 'rate(20 minutes)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt WeatherCollectorFunction.Arn
+          Id: WeatherCollectorTarget
+          RetryPolicy:
+            MaximumRetryAttempts: 2
+
+  # Permission for EventBridge to invoke Lambda
+  WeatherCollectorInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WeatherCollectorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeatherCollectionSchedule.Arn
+
+  # API Gateway Rest API
+  WeatherAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ApiName}-${Environment}'
+      Description: Weather API Aggregation Service
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApiName
+
+  # API Gateway Resources
+  WeatherResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ParentId: !GetAtt WeatherAPI.RootResourceId
+      PathPart: weather
+
+  CurrentWeatherResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ParentId: !Ref WeatherResource
+      PathPart: current
+
+  HistoryWeatherResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ParentId: !Ref WeatherResource
+      PathPart: history
+
+  SourcesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ParentId: !Ref WeatherResource
+      PathPart: sources
+
+  HealthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ParentId: !GetAtt WeatherAPI.RootResourceId
+      PathPart: health
+
+  # API Gateway Methods
+  CurrentWeatherMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref CurrentWeatherResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  CurrentWeatherOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref CurrentWeatherResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  HistoryWeatherMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref HistoryWeatherResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.querystring.hours: false
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  HistoryWeatherOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref HistoryWeatherResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  SourcesMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref SourcesResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  SourcesOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref SourcesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  HealthMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref HealthResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  HealthOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      ResourceId: !Ref HealthResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WeatherAPIFunction.Arn}/invocations'
+
+  # Lambda Permissions for API Gateway
+  APIGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WeatherAPIFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WeatherAPI}/*/*/*'
+
+  # API Gateway Deployment
+  APIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - CurrentWeatherMethod
+      - HistoryWeatherMethod
+      - SourcesMethod
+      - HealthMethod
+    Properties:
+      RestApiId: !Ref WeatherAPI
+      Description: !Sub 'Deployment for ${Environment} environment'
+
+  # API Gateway Stage
+  APIStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: !Ref Environment
+      RestApiId: !Ref WeatherAPI
+      DeploymentId: !Ref APIDeployment
+      Description: !Sub '${Environment} stage'
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+          ThrottlingBurstLimit: 100
+          ThrottlingRateLimit: 50
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApiName
+
+  # CloudWatch Log Groups
+  CollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${WeatherCollectorFunction}'
+      RetentionInDays: 7
+
+  APILogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${WeatherAPIFunction}'
+      RetentionInDays: 7
+
+  # CloudWatch Alarms
+  CollectorErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApiName}-${Environment}-collector-errors'
+      AlarmDescription: Alert when weather collector has errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WeatherCollectorFunction
+      TreatMissingData: notBreaching
+
+  APIErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApiName}-${Environment}-api-errors'
+      AlarmDescription: Alert when weather API has high error rate
+      MetricName: 4XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub '${ApiName}-${Environment}'
+        - Name: Stage
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  DataFreshnessAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ApiName}-${Environment}-data-staleness'
+      AlarmDescription: Alert when weather data is not being updated
+      MetricName: Invocations
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 1800
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WeatherCollectorFunction
+      TreatMissingData: breaching
+
+  # CloudWatch Dashboard
+  WeatherAPIDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ApiName}-${Environment}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", {"stat": "Sum", "label": "Collector Invocations"}],
+                  [".", "Errors", {"stat": "Sum", "label": "Collector Errors"}],
+                  [".", "Duration", {"stat": "Average", "label": "Collector Duration (ms)"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Weather Collector Metrics",
+                "period": 300,
+                "dimensions": {
+                  "FunctionName": "${WeatherCollectorFunction}"
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ApiGateway", "Count", {"stat": "Sum", "label": "API Requests"}],
+                  [".", "4XXError", {"stat": "Sum", "label": "4XX Errors"}],
+                  [".", "5XXError", {"stat": "Sum", "label": "5XX Errors"}],
+                  [".", "Latency", {"stat": "Average", "label": "Latency (ms)"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "API Gateway Metrics",
+                "period": 300,
+                "dimensions": {
+                  "ApiName": "${ApiName}-${Environment}",
+                  "Stage": "${Environment}"
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/DynamoDB", "ConsumedReadCapacityUnits", {"stat": "Sum"}],
+                  [".", "ConsumedWriteCapacityUnits", {"stat": "Sum"}],
+                  [".", "UserErrors", {"stat": "Sum"}],
+                  [".", "SystemErrors", {"stat": "Sum"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "DynamoDB Metrics",
+                "period": 300,
+                "dimensions": {
+                  "TableName": "${WeatherDataTable}"
+                }
+              }
+            }
+          ]
+        }
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${WeatherAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${ApiName}-${Environment}-api-endpoint'
+
+  DynamoDBTableName:
+    Description: DynamoDB table name
+    Value: !Ref WeatherDataTable
+    Export:
+      Name: !Sub '${ApiName}-${Environment}-table-name'
+
+  WeatherCollectorFunctionArn:
+    Description: Weather Collector Lambda Function ARN
+    Value: !GetAtt WeatherCollectorFunction.Arn
+    Export:
+      Name: !Sub '${ApiName}-${Environment}-collector-arn'
+
+  WeatherAPIFunctionArn:
+    Description: Weather API Lambda Function ARN
+    Value: !GetAtt WeatherAPIFunction.Arn
+    Export:
+      Name: !Sub '${ApiName}-${Environment}-api-arn'
+
+  SecretsManagerArn:
+    Description: Secrets Manager ARN for API keys
+    Value: !Ref WeatherAPISecrets
+    Export:
+      Name: !Sub '${ApiName}-${Environment}-secrets-arn'
+
+  DeploymentBucketNameOutput:
+    Description: S3 Bucket for deployment artifacts
+    Value: !Ref DeploymentBucketName
+    Export:
+      Name: !Sub '${ApiName}-${Environment}-deployment-bucket'
+
+  DashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ApiName}-${Environment}-dashboard'

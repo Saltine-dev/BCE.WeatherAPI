@@ -1,0 +1,6 @@
+{
+  "openweathermap": "YOUR_OPENWEATHERMAP_API_KEY_HERE",
+  "weatherapi": "YOUR_WEATHERAPI_KEY_HERE",
+  "visualcrossing": "YOUR_VISUALCROSSING_KEY_HERE",
+  "tomorrow_io": "YOUR_TOMORROW_IO_KEY_HERE"
+}
