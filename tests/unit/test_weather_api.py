@@ -171,7 +171,7 @@ class TestHistoricalWeather(unittest.TestCase):
         self.assertEqual(result['statusCode'], 200)
         body = json.loads(result['body'])
         
-        self.assertEqual(body['location'], handler.LOCATION)
+        self.assertEqual(body['location'], weather_api_handler.LOCATION)
         self.assertEqual(body['data_points'], 5)
         self.assertEqual(len(body['history']), 5)
         self.assertIn('statistics', body)
@@ -206,7 +206,7 @@ class TestDataSources(unittest.TestCase):
         self.assertEqual(result['statusCode'], 200)
         body = json.loads(result['body'])
         
-        self.assertEqual(body['location'], handler.LOCATION)
+        self.assertEqual(body['location'], weather_api_handler.LOCATION)
         self.assertIn('coordinates', body)
         self.assertIn('available_sources', body)
         self.assertIsInstance(body['available_sources'], list)
