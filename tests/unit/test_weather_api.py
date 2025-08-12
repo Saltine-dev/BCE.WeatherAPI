@@ -382,7 +382,7 @@ class TestLambdaHandler(unittest.TestCase):
             'path': '/unknown/path'
         }
         
-        result = handler.lambda_handler(event, {})
+        result = weather_api_handler.lambda_handler(event, {})
         
         self.assertEqual(result['statusCode'], 404)
         body = json.loads(result['body'])
