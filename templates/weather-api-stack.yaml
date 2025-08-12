@@ -313,6 +313,32 @@ Resources:
         - Key: Application
           Value: !Ref ApiName
 
+  # IAM Role for API Gateway to push logs to CloudWatch
+  ApiGatewayCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApiName}-${Environment}-apigw-cw-logs-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApiName
+
+  # Set API Gateway account-level CloudWatch Logs role
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+
   # API Gateway Resources
   WeatherResource:
     Type: AWS::ApiGateway::Resource
@@ -472,6 +498,9 @@ Resources:
   # API Gateway Stage
   APIStage:
     Type: AWS::ApiGateway::Stage
+    DependsOn:
+      - APIDeployment
+      - ApiGatewayAccount
     Properties:
       StageName: !Ref Environment
       RestApiId: !Ref WeatherAPI
