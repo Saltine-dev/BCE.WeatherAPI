@@ -99,18 +99,44 @@ Sign up for free API keys from:
 4. [Tomorrow.io](https://www.tomorrow.io/) - 500 calls/day
 5. [Open-Meteo](https://open-meteo.com/) - No API key required
 
-## 🚀 Quick Start
+## 🚀 Quick Start (GitHub CI/CD deployment)
 
-### 1. Clone the Repository
+### 1) Fork/clone the repo
 
 ```bash
-git clone https://github.com/yourusername/weather-api-aggregator.git
-cd weather-api-aggregator
+git clone https://github.com/yourusername/BCE.WeatherAPI.git
+cd BCE.WeatherAPI
 ```
 
-### 2. Configure API Keys
+### 2) Configure GitHub Actions secrets (for CI/CD)
 
-Create `config/api-keys.json`:
+In GitHub → your repo → Settings → Secrets and variables → Actions → New repository secret:
+
+- AWS_ACCESS_KEY_ID
+- AWS_SECRET_ACCESS_KEY
+- AWS_REGION = us-east-1
+- AWS_ACCOUNT_ID = <your 12-digit account id>
+
+Pushes to `main` deploy to prod; pushes to `develop` deploy to dev (see `.github/workflows/deploy.yml`).
+
+### 3) Push to trigger deployment
+
+```bash
+git add -A
+git commit -m "Initial publish"
+git push -u origin main
+```
+
+The workflow will:
+- Build and package Lambda functions and layer
+- Upload artifacts to an S3 deployment bucket
+- Create/Update the CloudFormation stack with required capabilities
+- Handle `ROLLBACK_COMPLETE` by deleting/recreating the stack
+- Run basic integration checks and print outputs
+
+### 4) Add weather API provider keys in Secrets Manager
+
+AWS Console → Secrets Manager → find secret like `weather-aggregator-prod-api-keys` → Edit → paste JSON (example):
 
 ```json
 {
@@ -121,30 +147,31 @@ Create `config/api-keys.json`:
 }
 ```
 
-### 3. Deploy to AWS
+Alternatively (CLI) if you have `config/api-keys.json` locally:
 
 ```bash
-# Make script executable
-chmod +x scripts/deploy.sh
-
-# Deploy to development environment
-./scripts/deploy.sh dev
-
-# Deploy to production
-./scripts/deploy.sh prod
+aws secretsmanager update-secret \
+  --secret-id weather-aggregator-prod-api-keys \
+  --secret-string file://config/api-keys.json
 ```
 
-### 4. Verify Deployment
+### 5) Trigger the collector once (don’t wait 20 minutes)
 
 ```bash
-# Get the API endpoint from the deployment output
-API_ENDPOINT="https://your-api-id.execute-api.us-east-1.amazonaws.com/prod"
+aws lambda invoke \
+  --function-name weather-aggregator-prod-collector \
+  --invocation-type Event out.json
+```
 
-# Test the health endpoint
-curl $API_ENDPOINT/health
+### 6) Verify
 
-# Get current weather
-curl $API_ENDPOINT/weather/current
+Get the API endpoint from CloudFormation stack outputs (key `ApiEndpoint`) and test:
+
+```bash
+curl <ApiEndpoint>/health
+curl <ApiEndpoint>/weather/sources
+curl <ApiEndpoint>/weather/current
+curl <ApiEndpoint>/weather/history?hours=24
 ```
 
 ## 📚 API Documentation
@@ -286,78 +313,52 @@ Get information about data sources
 
 ## 💻 Local Development
 
+Prerequisites: Python 3.11+, Docker, AWS CLI, SAM CLI.
+
 ### Setup
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Set up local development environment
 chmod +x scripts/local-dev.sh
 ./scripts/local-dev.sh setup
 ```
 
-### Running Locally
+This will:
+- Start DynamoDB Local in Docker
+- Create a local table
+- Generate `.env.local` and `template-local.yaml`
+- Build functions with SAM
+
+### Start locally and test
 
 ```bash
-# Start local API server
-./scripts/local-dev.sh start
-
-# In another terminal, test the endpoints
-./scripts/local-dev.sh test
-
-# Invoke weather collector manually
-./scripts/local-dev.sh invoke
+./scripts/local-dev.sh start   # starts API at http://localhost:3000
+./scripts/local-dev.sh test    # calls all endpoints
+./scripts/local-dev.sh invoke  # invokes the collector once
 ```
 
-### Testing
+### Run tests
 
 ```bash
-# Run unit tests
 pytest tests/unit/ -v
-
-# Run integration tests
 export API_ENDPOINT=http://localhost:3000
 pytest tests/integration/ -v
-
-# Run all tests with coverage
-pytest tests/ -v --cov=src --cov-report=html
 ```
 
-## 🚢 Deployment
+## 🚢 Deployment (details)
 
-### GitHub Actions CI/CD
+The GitHub Actions workflow `.github/workflows/deploy.yml` does the following on push:
 
-The repository includes a complete CI/CD pipeline that:
+- Run unit tests
+- Validate the CloudFormation template
+- Package Lambdas and layer
+- Upload artifacts to S3 (creates bucket if needed)
+- Create/Update the stack with `CAPABILITY_NAMED_IAM` and `CAPABILITY_AUTO_EXPAND`
+- Auto-handle `ROLLBACK_COMPLETE` by deleting/recreating the stack
+- Run integration tests and print stack outputs
 
-1. Runs tests on every push
-2. Validates CloudFormation templates
-3. Builds and packages Lambda functions
-4. Deploys to AWS automatically
-5. Runs integration tests post-deployment
-
-### Manual Deployment
-
-```bash
-# Deploy to specific environment
-./scripts/deploy.sh [dev|staging|prod]
-
-# Update only Lambda function code
-aws lambda update-function-code \
-  --function-name weather-aggregator-prod-collector \
-  --s3-bucket your-deployment-bucket \
-  --s3-key lambdas/weather-collector.zip
-```
-
-### GitHub Repository Setup
-
-1. Fork/clone this repository
-2. Set up GitHub Secrets:
-   - `AWS_ACCESS_KEY_ID`
-   - `AWS_SECRET_ACCESS_KEY`
-   - `AWS_ACCOUNT_ID`
-3. Update API keys in AWS Secrets Manager
-4. Push to main branch to trigger deployment
+Environments:
+- `main` → prod
+- `develop` → dev
 
 ## ⚙️ Configuration
 
