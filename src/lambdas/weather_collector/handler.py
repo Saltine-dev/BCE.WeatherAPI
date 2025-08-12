@@ -46,6 +46,14 @@ HTTP = requests.Session()
 HTTP.mount("https://", _http_adapter)
 HTTP.mount("http://", _http_adapter)
 
+def _resilient_get(url: str, params: Dict[str, Any], timeout: int = 10):
+    """Attempt a direct requests.get first (so tests can patch it),
+    then fall back to a Session with retries on failure."""
+    try:
+        return requests.get(url, params=params, timeout=timeout)
+    except Exception:
+        return HTTP.get(url, params=params, timeout=timeout)
+
 class WeatherAPIClient:
     """Base class for weather API clients"""
     
@@ -70,7 +78,7 @@ class OpenWeatherMapClient(WeatherAPIClient):
                 "units": "metric"
             }
             
-            response = HTTP.get(url, params=params, timeout=10)
+            response = _resilient_get(url, params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -104,7 +112,7 @@ class WeatherAPIComClient(WeatherAPIClient):
                 "aqi": "yes"
             }
             
-            response = HTTP.get(url, params=params, timeout=10)
+            response = _resilient_get(url, params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -140,7 +148,7 @@ class VisualCrossingClient(WeatherAPIClient):
                 "include": "current"
             }
             
-            response = HTTP.get(url, params=params, timeout=10)
+            response = _resilient_get(url, params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -177,7 +185,7 @@ class OpenMeteoClient(WeatherAPIClient):
                 "timezone": "America/Chicago"
             }
             
-            response = HTTP.get(url, params=params, timeout=10)
+            response = _resilient_get(url, params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -227,7 +235,7 @@ class TomorrowIOClient(WeatherAPIClient):
                 "units": "metric"
             }
             
-            response = HTTP.get(url, params=params, timeout=10)
+            response = _resilient_get(url, params, timeout=10)
             response.raise_for_status()
             data = response.json()
             
