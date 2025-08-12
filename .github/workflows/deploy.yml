@@ -238,7 +238,7 @@ jobs:
               ParameterKey=ApiPackageKey,ParameterValue=${API_KEY} \
               ParameterKey=UseCommonLayer,ParameterValue=true \
               ParameterKey=CommonLayerKey,ParameterValue=${LAYER_KEY} \
-            --capabilities CAPABILITY_NAMED_IAM \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
             --tags \
               Key=Environment,Value=${{ matrix.environment }} \
               Key=Application,Value=weather-aggregator \

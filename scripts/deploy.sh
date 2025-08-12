@@ -185,7 +185,7 @@ deploy_cloudformation_stack() {
             ParameterKey=ApiPackageKey,ParameterValue=lambdas/weather-api.zip \
             ParameterKey=UseCommonLayer,ParameterValue=true \
             ParameterKey=CommonLayerKey,ParameterValue=layers/common-dependencies.zip \
-        --capabilities CAPABILITY_NAMED_IAM \
+        --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
         --region "${AWS_REGION}" \
         || true
     
